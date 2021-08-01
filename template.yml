@@ -1,0 +1,51 @@
+ROSTemplateFormatVersion: '2015-09-01'
+Transform: 'Aliyun::Serverless-2018-04-03'
+Resources:
+  codec:
+    Type: 'Aliyun::Serverless::Service'
+    Properties:
+      Role: 'acs:ram::1834461034413514:role/aliyunfcdefaultrole'
+      LogConfig:
+        Project: aliyun-fc-cn-hangzhou-90b7f5c7-d6e7-5e0c-8df1-4a5b9e79dac1
+        Logstore: function-log
+      InternetAccess: true
+    gas-compile-and-run:
+      Type: 'Aliyun::Serverless::Function'
+      Properties:
+        Handler: index.handler
+        Runtime: nodejs12
+        Timeout: 60
+        MemorySize: 512
+        InstanceConcurrency: 1
+        EnvironmentVariables: {}
+        CodeUri: ./codec/gas-compile-and-run
+      Events:
+        defaultTrigger:
+          Type: HTTP
+          Properties:
+            AuthType: anonymous
+            Methods:
+              - GET
+              - POST
+    site:
+      Type: 'Aliyun::Serverless::Function'
+      Properties:
+        Handler: index.handler
+        Runtime: nodejs12
+        Timeout: 60
+        MemorySize: 512
+        InstanceConcurrency: 1
+        EnvironmentVariables: {}
+        CodeUri: ./codec/site
+      Events:
+        defaultTrigger:
+          Type: HTTP
+          Properties:
+            AuthType: anonymous
+            Methods:
+              - GET
+              - POST
+              - PUT
+              - DELETE
+              - HEAD
+              - PATCH
