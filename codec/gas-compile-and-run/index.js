@@ -104,7 +104,11 @@ async function main(req, resp) {
 
     // 2. 解析 body (json, 表单)
     const rawBody = await getRawBody(req);
-    params.body = qs.parse(rawBody.toString());
+    // { code: '....' }
+    // TODO 根据 header 传上来的类型不同来解析
+    // application/x-www-form-urlencoded
+    // params.body = qs.parse(rawBody.toString());
+    params.body = JSON.parse(rawBody.toString());
 
     // 执行 asm 代码
     const result = await asmRunner(params);
