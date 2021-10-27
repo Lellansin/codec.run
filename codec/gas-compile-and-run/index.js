@@ -1,23 +1,17 @@
-var getRawBody = require('raw-body');
-var getFormBody = require('body/form');
-var body = require('body');
-
 'use strict';
 
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const {
-	spawn, execSync
-} = require('child_process');
+const { spawn } = require('child_process');
+const getRawBody = require('raw-body');
+const qs = require('querystring');
 
 const DIR = os.tmpdir();
-
-async function main({
-	code = `    .global _start
+const DEFAULT_CODE = `    .global _start
 
 message:
-    .ascii  "Hello, world...\n"
+    .ascii  "Hello, world!\n"
     len = . - message
 
 _start:
@@ -28,62 +22,77 @@ _start:
     syscall
     mov     $60, %rax
     mov     $0, %rdi
-    syscall`
-}) {
+    syscall`;
+
+async function asmRunner(params = {}) {
+    let code = DEFAULT_CODE;
+    if (params.body && params.body.code) {
+        code = params.body.code;
+    }
+
+    // 1. 保存代码为临时文件
 	const file = path.join(DIR, 'code.s');
-	const obj = path.join(DIR, 'code.o');
-    const bin = path.join(DIR, 'a.out');
 	fs.writeFileSync(file, code);
+
+    // 2. 使用汇编编译器编译临时文件，生成对象文件: as 临时文件 -o 对象文件
+	const obj = path.join(DIR, 'code.o');
 	const r1 = await exec('as', [file, '-o', obj]);
-    if (r1.code != 0) {
+    if (r1.exitCode != 0) {
 	  return r1;
 	}
     
+    // 3. 使用 ld 连接器链接对象文件，生成可执行文件: ld 对象文件 -o 可执行文件
+    const bin = path.join(DIR, 'a.out');
 	const res = await exec('ld', [obj, '-o', bin]);
-	if (res.code != 0) {
+	if (res.exitCode != 0) {
 	  return res;
 	}
-    return exec(bin);
+
+    // 4. 运行可执行文件
+    const result = await exec(bin);
+    return result;
 }
 
 function exec(cmd, args) {
 	let log = '';
-	return new Promise((done) => {
+	return new Promise((resolve) => {
 		const ls = spawn(cmd, args);
 
+        // stdout 拼装
 		ls.stdout.on('data', (data) => {
 			log += data;
 		});
 
+        // stderr 拼装
 		ls.stderr.on('data', (data) => {
 			log += data;
 		});
 
-		ls.on('close', (code) => {
-			done({
-				code,
+		ls.on('close', (exitCode) => {
+			resolve({
+				exitCode,
 				log
 			});
 		});
 	});
 }
 
-function parse(event) {
-	return JSON.parse(event.toString());
+/**
+ * FC 的 handler
+ * @param {*} req HTTP request 请求
+ * @param {*} resp HTTP response 响应
+ */
+exports.handler = async (req, resp) => {
+    try {
+        await main(req, resp);
+    } catch(err) {
+        resp.statusCode = 500;
+        resp.send(err.stack);
+    }
 }
 
-/*
-To enable the initializer feature (https://help.aliyun.com/document_detail/156876.html)
-please implement the initializer function as below：
-exports.initializer = (context, callback) => {
-  console.log('initializing');
-  callback(null, '');
-};
-*/
-
-exports.handler = (req, resp, context) => {
-    console.log('hello world');
-
+async function main(req, resp) {
+    // 1. 拼装请求参数
     var params = {
         path: req.path,
         queries: req.queries,
@@ -92,35 +101,15 @@ exports.handler = (req, resp, context) => {
         requestURI : req.url,
         clientIP : req.clientIP,
     }
-        
-    getRawBody(req, function(err, body) {
-        for (var key in req.queries) {
-          var value = req.queries[key];
-          resp.setHeader(key, value);
-        }
-        params.body = body.toString();
-        if (params.body) {
-            main(params.body).then((output) => {
-               resp.send(JSON.stringify(output));
-             })
-        }
-        else if (params.path == '/cmd' && params.body) {
-            const output = execSync(params.body).toString();
-            resp.send(output);
-        } else {
-            resp.send(JSON.stringify(params, null, '    '));
-        }
-    }); 
-      
-    /*
-    getFormBody(req, function(err, formBody) {
-        for (var key in req.queries) {
-          var value = req.queries[key];
-          resp.setHeader(key, value);
-        }
-        params.body = formBody;
-        console.log(formBody);
-        resp.send(JSON.stringify(params));
-    }); 
-    */
+
+    // 2. 解析 body (json, 表单)
+    const rawBody = await getRawBody(req);
+    params.body = qs.parse(rawBody.toString());
+
+    // 执行 asm 代码
+    const result = await asmRunner(params);
+
+    // 返回执行结果
+    resp.headers['content-type'] = 'application/json';
+    resp.send(JSON.stringify(result));
 }
